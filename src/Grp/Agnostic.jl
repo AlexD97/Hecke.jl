@@ -133,6 +133,7 @@ function _closing_under_generators_naive(S, op, id; eq = ==)
         end
       end
     end
+    @show length(list)
   end
   return list
 end
@@ -161,6 +162,7 @@ function _closing_under_generators_dimino(S, op, id; eq = ==)
   end
 
   for i in 2:t
+    @show t, length(elements)
     if !(any(x -> eq(x, S[i]), elements))
       previous_order = order
       order = order + 1
@@ -172,6 +174,7 @@ function _closing_under_generators_dimino(S, op, id; eq = ==)
 
       rep_pos = previous_order + 1
       while rep_pos <= order
+        @show length(elements)
         for k in 1:i
           s = S[k]
           elt = op(elements[rep_pos], s)

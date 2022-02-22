@@ -1503,6 +1503,7 @@ end
 
 function _unit_group_generators_maximal_simple(M)
   A = algebra(M)
+  ZA, ZAtoA = _as_algebra_over_center(A)
   if isdefined(A, :isomorphic_full_matrix_algebra)
     B, AtoB = A.isomorphic_full_matrix_algebra
     OB = _get_order_from_gens(B, [AtoB(elem_in_algebra(b)) for b in absolute_basis(M)])
@@ -1513,6 +1514,14 @@ function _unit_group_generators_maximal_simple(M)
     gens_adjusted = [ inv(S) * u * S for u in gens]
     @assert all(b in OB for b in gens_adjusted)
     gens_in_M = [ AtoB\u for u in gens_adjusted]
+    @assert all(b in M for b in gens_in_M)
+    return gens_in_M
+ elseif dim(ZA) == 4 && !isdefined(A, :isomorphic_full_matrix_algebra)
+    #@show A
+    Q, QtoZA = isquaternion_algebra(ZA)
+    MQ = _get_order_from_gens(Q, [QtoZA\(ZAtoA\(elem_in_algebra(b))) for b in absolute_basis(M)])
+    _gens =  _unit_group_generators_quaternion(MQ)
+    gens_in_M = [ ZAtoA(QtoZA(elem_in_algebra(u))) for u in _gens]
     @assert all(b in M for b in gens_in_M)
     return gens_in_M
   else
@@ -2075,4 +2084,78 @@ function _adjust_automorphism_group(mK, mQ, ktoK)
     end
   end
   return GrpGenToNfMorSet(Q, v, k)
+end
+
+################################################################################
+#
+#  Bley--Johnston--Hofmann enumeration method
+#
+################################################################################
+
+function __isprincipal(O, I, side = :right)
+  A = algebra(O)
+  dec = decompose(A)
+  Hecke._compute_matrix_algebras_from_reps2(A, dec)
+  M = maximal_order(O)
+  Z, ZtoA = center(A)
+  Fl = conductor(O, M, :left)
+
+  FinZ = _as_ideal_of_smaller_algebra(ZtoA, Fl)
+  # Compute FinZ*OA but as an ideal of O
+  bM = basis(M, copy = false)
+  bFinZ = basis(FinZ, copy = false)
+  basis_F = Vector{elem_type(A)}()
+  for x in bM
+    for y in bFinZ
+      yy = ZtoA(y)
+      t = yy * elem_in_algebra(x, copy = false)
+      push!(basis_F, t)
+    end
+  end
+
+  for b in basis_F
+    @assert b in O
+  end
+
+  F = ideal_from_lattice_gens(A, O, basis_F, :twosided)
+
+  @show F == (conductor(O, M, :left) * conductor(O, M, :right))
+
+  for (B, mB) in dec
+    MinB = Order(B, elem_type(B)[(mB\(mB(one(B)) * elem_in_algebra(b))) for b in absolute_basis(M)])
+    #@show ismaximal(MinC)
+    #@show hnf(basis_matrix(MinC))
+    UB = _unit_group_generators_maximal_simple(MinB)
+    #@show UB
+    #if isdefined(B, :isomorphic_full_matrix_algebra)
+    #  local C::AlgMat{nf_elem, Generic.MatSpaceElem{nf_elem}}
+    #  C, BtoC = B.isomorphic_full_matrix_algebra
+    #  MinC = _get_order_from_gens(C, elem_type(C)[BtoC(elem_in_algebra(b)) for b in absolute_basis(MinB)])
+    #  @show MinC
+    #  @show nice_order(MinC)
+    #end
+    FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
+    @show basis_matrix(MinB)
+    @show basis_matrix(FinB)
+    @show basis_matrix(FinB) == basis_matrix(MinB)
+    @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
+    FinB.order = MinB
+    Q, MinBtoQ = quo(MinB, FinB)
+    for u in UB
+      @assert u in MinB && inv(u) in MinB
+      @show u in FinB
+    end
+    UB_reduced = [MinBtoQ(MinB(u)) for u in UB]
+    #@show UB_reduced
+    __units = collect(zip(UB, UB_reduced))
+
+    @show length(UB)
+    @show UB_reduced
+    @info "computing closure"
+    cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+
+    @show length(cl)
+
+    #@show FinB
+  end
 end
