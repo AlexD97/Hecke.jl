@@ -51,6 +51,7 @@ function _isprincipal_maximal(a::AlgAssAbsOrdIdl, M, side = :right)
     fl, gen = _is_principal_maximal_simple_component(ainB, MinB, side)
     #@show "not simple for component", B
     if !fl
+      @info "Not maximal over dimension $(dim(B))"
       return false, zero(A)
     end
     push!(gens, mB(gen))
@@ -238,9 +239,9 @@ function _is_principal_maximal_full_matrix_algebra(a, M, side = :right)
     aN = ideal_from_lattice_gens(algebra(M), elem_type(AM)[b * inv(S) for b in absolute_basis(a)])
     fl, _gen = _isprincipal_maximal_simple_nice(aN, N, side)
     gen = _gen * S
-    if fl
-      @assert gen * M == a
-    end
+    #if fl
+    #  @assert gen * M == a
+    #end
     return fl, gen
   end
 end
@@ -2097,6 +2098,24 @@ function __isprincipal(O, I, side = :right)
   dec = decompose(A)
   Hecke._compute_matrix_algebras_from_reps2(A, dec)
   M = maximal_order(O)
+
+  fl, alpha = _isprincipal_maximal(I * M, M, :right)
+
+  if !fl
+    #@info "Not principal over maximal order"
+    return false, zero(A)
+  end
+
+  # Now test local freeness at the primes dividing the index [M : O]
+  for p in prime_divisors(index(O, M))
+    if !islocally_free(O, I, p, side = :right)[1]
+      #@info "Not locally free at $p"
+      return false, zero(A)
+    end
+  end
+
+  @assert alpha * M == I * M
+
   Z, ZtoA = center(A)
   Fl = conductor(O, M, :left)
 
@@ -2119,13 +2138,31 @@ function __isprincipal(O, I, side = :right)
 
   F = ideal_from_lattice_gens(A, O, basis_F, :twosided)
 
-  @show F == (conductor(O, M, :left) * conductor(O, M, :right))
+  #@show F == (conductor(O, M, :left) * conductor(O, M, :right))
+  #@show det(basis_matrix(F))
+  #@show det(basis_matrix(conductor(O, M, :left) * conductor(O, M, :right)))
+
+  has_unit_reps = false
+  _unit_reps = get_attribute(O, :unit_reps)
+  if  _unit_reps === nothing
+    unit_reps = []
+  else
+    unit_reps = _unit_reps
+    has_unit_reps = true
+    #@info "unit reps cached"
+  end
+
+  bases = Vector{elem_type(A)}[]
+
+  IM = I * M
 
   for (B, mB) in dec
     MinB = Order(B, elem_type(B)[(mB\(mB(one(B)) * elem_in_algebra(b))) for b in absolute_basis(M)])
     #@show ismaximal(MinC)
     #@show hnf(basis_matrix(MinC))
-    UB = _unit_group_generators_maximal_simple(MinB)
+    IMinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(IM)])
+    IMinB_basis = [mB(u) for u in absolute_basis(IMinB)]
+    push!(bases, IMinB_basis)
     #@show UB
     #if isdefined(B, :isomorphic_full_matrix_algebra)
     #  local C::AlgMat{nf_elem, Generic.MatSpaceElem{nf_elem}}
@@ -2134,28 +2171,328 @@ function __isprincipal(O, I, side = :right)
     #  @show MinC
     #  @show nice_order(MinC)
     #end
-    FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
-    @show basis_matrix(MinB)
-    @show basis_matrix(FinB)
-    @show basis_matrix(FinB) == basis_matrix(MinB)
-    @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
-    FinB.order = MinB
-    Q, MinBtoQ = quo(MinB, FinB)
-    for u in UB
-      @assert u in MinB && inv(u) in MinB
-      @show u in FinB
+    if !has_unit_reps
+      UB = _unit_group_generators_maximal_simple(MinB)
+      FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
+      @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
+      FinB.order = MinB
+      Q, MinBtoQ = quo(MinB, FinB)
+      for u in UB
+        @assert u in MinB && inv(u) in MinB
+        #@show u in FinB
+      end
+      UB_reduced = [MinBtoQ(MinB(u)) for u in UB]
+      #@show UB_reduced
+      __units = collect(zip(UB, UB_reduced))
+
+      #@show length(UB)
+      #@show UB_reduced
+      #@info "computing closure"
+      cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+
+      #@show length(cl)
+      push!(unit_reps, first.(cl))
     end
-    UB_reduced = [MinBtoQ(MinB(u)) for u in UB]
-    #@show UB_reduced
-    __units = collect(zip(UB, UB_reduced))
-
-    @show length(UB)
-    @show UB_reduced
-    @info "computing closure"
-    cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
-
-    @show length(cl)
 
     #@show FinB
   end
+
+  if !has_unit_reps
+    set_attribute!(O, :unit_reps, unit_reps)
+  end
+
+  decc = copy(dec)
+  p = sortperm(unit_reps, by = x -> length(x))
+  dec_sorted = decc[p]
+  units_sorted = unit_reps[p]
+  bases_sorted = bases[p]
+  bases_offsets_and_lengths = Tuple{Int, Int}[]
+  k = 1
+  for i in 1:length(bases_sorted)
+    push!(bases_offsets_and_lengths, (k, length(bases_sorted[i])))
+    k += length(bases_sorted[i])
+  end
+
+  #@show bases_offsets_and_lengths
+
+  # let's collect the Z-basis of the Mi
+  bases_sorted_cat = reduce(vcat, bases_sorted)
+  special_basis_matrix = basis_matrix(bases_sorted_cat)
+  inv_special_basis_matrix = inv(special_basis_matrix)
+  Amatrix = fmpq_mat(basis_matrix(I)) * inv(special_basis_matrix)
+  H, U = hnf_with_transform(change_base_ring(ZZ, Amatrix))
+  Hinv = inv(fmpq_mat(H))
+  
+  local_coeffs = Vector{Vector{fmpq}}[]
+
+  #@info "preprocessing units"
+  for i in 1:length(dec)
+    _local_coeffs = Vector{fmpq}[]
+    for u in units_sorted[i]
+      aui = dec_sorted[i][2](dec_sorted[i][2]\(alpha)) * dec_sorted[i][2](u)
+      auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix * Hinv)
+      push!(_local_coeffs, auiasvec)
+    end
+    push!(local_coeffs, _local_coeffs)
+  end
+
+  #for i in 1:length(dec)
+  #  @show local_coeffs
+  #end
+
+  # Try to reduce the number of tests
+  #@info "Collected information for the last block"
+  l = bases_offsets_and_lengths[end][2]
+  o = bases_offsets_and_lengths[end][1]
+  indices_integral = Vector{Int}[Int[] for i in 1:l]
+  indices_nonintegral = Vector{Int}[Int[] for i in 1:l]
+  for j in 1:length(local_coeffs[end])
+    for i in o:(o + l - 1)
+      if isintegral(local_coeffs[end][j][i])
+        push!(indices_integral[i - o + 1], j)
+      else
+        push!(indices_nonintegral[i - o + 1], j)
+      end
+    end
+  end
+
+  #@info "Lengths $(length.(local_coeffs))"
+  #@info "Unrestricted length of last block: $(length(local_coeffs[end]))"
+  #@info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
+  #@info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
+
+  dd = dim(A)
+
+  # form the product of the first sets
+  #@show length(cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec) - 1]))
+
+  fl, x = recursive_iterator([length(local_coeffs[i]) for i in 1:length(dec)], dd, local_coeffs, bases_offsets_and_lengths, indices_integral, indices_nonintegral)
+  if fl
+    _vtemp = reduce(.+, (local_coeffs[i][x[i]] for i in 1:length(local_coeffs)))
+    el = A(_vtemp * (H * special_basis_matrix))
+    @assert el * O == I
+  end
+
+  ffl, xx = _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, special_basis_matrix, indices_integral, indices_nonintegral, A)
+
+  @assert fl === ffl
+  return ffl, xx
+
+#  #@show local_coeffs[end]
+#
+#  @info "now iterating"
+#  k = 0
+#  l = 0
+#  d = length(dec)
+#  dd = dim(A)
+#  vtemp = [zero(fmpq) for i in 1:dd]
+#  for idx in cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec)])
+#    k += 1
+#    if k % 10000 == 0
+#      @info "$k"
+#    end
+#    w = local_coeffs[1][idx[1]]
+#    for i in 1:dd
+#      ccall((:fmpq_set, libflint), Ref{Nothing}, (Ref{fmpq}, Ref{fmpq}), vtemp[i], w[i])
+#    end
+#    #@show vtemp
+#    for j in 2:length(dec)
+#      w = local_coeffs[j][idx[j]]
+#      for i in 1:dd
+#        add!(vtemp[i], vtemp[i], w[i])
+#      end
+#      #@show j, vtemp
+#    end
+#    if all(isintegral, vtemp)
+#      l += 1
+#      return true, A(vtemp * (H * special_basis_matrix))
+#    end
+#  end
+#
+#  for u in Iterators.product(unit_reps...)
+#    uu = sum(dec[i][2](u[i]) for i in 1:length(dec))
+#    aui = [ dec[i][2](dec[i][2]\(alpha)) * dec[i][2](u[i]) for i in 1:length(dec)]
+#    @assert sum(aui) == alpha * uu
+#    if uu * alpha in I
+#      @show alpha * uu
+#      return true, uu * alpha
+#    end
+#  end
+#  return false, zero(O)
+end
+
+function _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, special_basis_matrix, indices_integral, indices_nonintegral, A)
+  vtemp = [zero(fmpq) for i in 1:dd]
+  k = 0
+  l = 0
+  ll = [0 for i in 1:length(local_coeffs)]
+  for idx in cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec) - 1])
+    k += 1
+    if k % 1000000 == 0
+      #@info "$k"
+    end
+    w = local_coeffs[1][idx[1]]
+    for i in 1:dd
+      ccall((:fmpq_set, libflint), Ref{Nothing}, (Ref{fmpq}, Ref{fmpq}), vtemp[i], w[i])
+    end
+    #@show vtemp
+    for j in 2:(length(dec) - 1)
+      w = local_coeffs[j][idx[j]]
+      for i in bases_offsets_and_lengths[j][1]:dd
+        add!(vtemp[i], vtemp[i], w[i])
+      end
+      #@show j, vtemp
+    end
+    #@show vtemp
+    #@assert vtemp == reduce(.+, (local_coeffs[j][idx[j]] for j in 1:length(dec) - 1))
+    if any(!isintegral, @view vtemp[1:bases_offsets_and_lengths[end][1] - 1])
+      l += 1
+      j = findfirst([any(!isintegral, vtemp[bases_offsets_and_lengths[j][1]:bases_offsets_and_lengths[j + 1][1] - 1]) for j in 1:length(dec) - 1])
+      ll[j] += 1
+      continue
+    else
+      #@info "good"
+    end
+    o = bases_offsets_and_lengths[end][1]
+    l = bases_offsets_and_lengths[end][2]
+    ids = reduce(intersect, [isintegral(vtemp[o - 1 + i]) ? indices_integral[i] : indices_nonintegral[i] for i in 1:l])
+    _vtempcopy = deepcopy(vtemp)
+    #@show length(ids)
+    for j in ids
+      #for i in 1:dd
+      #  ccall((:fmpq_set, libflint), Ref{Nothing}, (Ref{fmpq}, Ref{fmpq}), vtemp[i], _vtempcopy[i])
+      #end
+      _vtemp = deepcopy(vtemp) .+ local_coeffs[end][j]
+      if all(isintegral, _vtemp)
+        @info "found x = $((idx...,j))"
+        return true, A(_vtemp * (H * special_basis_matrix))
+      end
+    end
+  end
+  #@info "when I could have skipped $ll"
+  #@info "Skipped $l things"
+
+  return false, zero(A)
+end
+
+# 
+function _recursive_iterator!(x, lengths, d, elts::Vector, bases_offsets, indices_integral, indices_nonintegral, k, i, vtemp)
+  if i > k
+    println("2", x)
+  elseif i == k # unroll 1-loop base case for speed
+    # this is the last component
+
+    # We do something clever for the indicies
+    o = bases_offsets[end][1]
+    l = bases_offsets[end][2]
+    ids = copy(isintegral(vtemp[o]) ? indices_integral[1] : indices_nonintegral[1])
+    for i in 2:l
+      intersect!(ids, isintegral(vtemp[o - 1 + i]) ? indices_integral[i] : indices_nonintegral[i])
+    end
+
+    #ids2 = reduce(intersect!, (isintegral(vtemp[o - 1 + i]) ? indices_integral[i] : indices_nonintegral[i] for i in 1:l))
+    #@assert ids == ids2
+
+    for j in ids # 1:lengths[i]
+      x[i] = j
+      if _is_admissible(x, i, d, elts, bases_offsets, vtemp)
+        #@assert all(isintegral, reduce(.+, (elts[k][x[k]] for k in 1:length(elts))))
+        return true
+      end
+      #if _is_admissible(x, i, d, elts, bases_offsets)
+      #  return true
+      #end
+      # here is the work done
+    end
+    return false
+  else
+    for j = 1:lengths[i]
+      x[i] = j
+      # So x = [...,j,*]
+      # We test whether this is admissible
+      if !_is_admissible(x, i, d, elts, bases_offsets, vtemp)
+        continue
+      end
+      fl = _recursive_iterator!(x, lengths, d, elts, bases_offsets, indices_integral, indices_nonintegral, k, i + 1, vtemp)
+      if fl
+        return true
+      end
+    end
+    return false
+  end
+end
+
+function _is_admissible(x, i, d, elts, bases_offsets, vtemp)
+  # Test if x[1,...,i] is admissible
+  w = elts[1][x[1]]
+  for k in 1:d
+    ccall((:fmpq_set, libflint), Ref{Nothing}, (Ref{fmpq}, Ref{fmpq}), vtemp[k], w[k])
+  end
+  #@show vtemp
+  for j in 2:i
+    w = elts[j][x[j]]
+    #@assert all(iszero, @view w[1:bases_offsets[j][1] - 1])
+    for k in bases_offsets[j][1]:d
+      add!(vtemp[k], vtemp[k], w[k])
+    end
+  end
+
+  #@show i, vtemp
+
+  # admissible means different things for different i
+  # if i < end
+  # then admissible means that the first i component of vtemp must be integral
+  #
+  # if i == end,
+  # then admissible means that the last component must be integral
+
+  vvtemp = @view vtemp[bases_offsets[i][1]:(bases_offsets[i][1] + bases_offsets[i][2] - 1)]
+
+  if any(!isintegral, vvtemp)
+    return false
+  else
+    return true
+  end
+end
+
+function recursive_iterator(lengths::Vector{Int}, d::Int, elts::Vector, bases_offsets::Vector{Tuple{Int, Int}}, indices_integral, indices_nonintegral)
+  k = length(lengths)
+  x = zeros(Int, k)
+  vtemp = fmpq[zero(fmpq) for i in 1:d]
+  if _recursive_iterator!(x, lengths, d, elts, bases_offsets, indices_integral, indices_nonintegral, k, 1, vtemp)
+    return true, x
+  else
+    return false, zeros(Int, k)
+  end
+end
+
+################################################################################
+#
+#  IsIsomorphic
+#
+################################################################################
+
+function _isisomorphic_generic(X, Y, side = :right)
+  C = _colon_raw(Y, X, :right)
+  CI = ideal(algebra(X), C)
+  for x in basis(CI)
+    for y in basis(X)
+      @assert  x * y in Y
+    end
+  end
+  if Y != CI * X
+    return false, zero(algebra(X))
+  end
+  Gamma = left_order(X)
+  @assert Hecke._test_ideal_sidedness(CI, Gamma, :right)
+  d = denominator(CI, Gamma)
+  CIint = d * CI
+  CIint.order = Gamma
+  @assert Hecke._test_ideal_sidedness(CIint, Gamma, :right)
+  fl, alpha  = __isprincipal(Gamma, CIint, :right)
+  if fl
+    alpha = inv(QQ(d)) * alpha
+    @assert alpha * X == Y
+  end
+  return fl, alpha
 end
