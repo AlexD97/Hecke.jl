@@ -51,7 +51,7 @@ function _isprincipal_maximal(a::AlgAssAbsOrdIdl, M, side = :right)
     fl, gen = _is_principal_maximal_simple_component(ainB, MinB, side)
     #@show "not simple for component", B
     if !fl
-      @info "Not maximal over dimension $(dim(B))"
+      #@info "Not maximal over dimension $(dim(B))"
       return false, zero(A)
     end
     push!(gens, mB(gen))
@@ -479,7 +479,7 @@ function _isprincipal(a::AlgAssAbsOrdIdl, O, side = :right)
   end
   @hassert :PIP 1 beta * OA == aOA
 
-  #@info "Computing K1..."
+  @info "Computing K1..."
   #@show F, FinZ
   k1 = K1_order_mod_conductor(O, OA, F, FinZ)
   OZ = maximal_order(Z)
@@ -525,7 +525,7 @@ function _isprincipal(a::AlgAssAbsOrdIdl, O, side = :right)
 
   ##@show mQuni\(mQ(OZ(normred_over_center(elem_in_algebra(UU), ZtoA)))) ==  mQuni\(mQ(OZ(normred_over_center(beta * elemA, ZtoA))))
 
-  #@info "Lifting to norm one unit"
+  @info "Lifting to norm one unit"
   V = lift_norm_one_unit( UU^(-1) * OA(elemA)  * OA(beta), F)
 
   gamma =  beta * inv(elem_in_algebra(UU) * V)
@@ -1506,6 +1506,7 @@ function _unit_group_generators_maximal_simple(M)
   A = algebra(M)
   ZA, ZAtoA = _as_algebra_over_center(A)
   if isdefined(A, :isomorphic_full_matrix_algebra)
+    #@info "Full matrix algebra unit group"
     B, AtoB = A.isomorphic_full_matrix_algebra
     OB = _get_order_from_gens(B, [AtoB(elem_in_algebra(b)) for b in absolute_basis(M)])
     N, S = nice_order(OB)
@@ -1519,6 +1520,7 @@ function _unit_group_generators_maximal_simple(M)
     return gens_in_M
  elseif dim(ZA) == 4 && !isdefined(A, :isomorphic_full_matrix_algebra)
     #@show A
+    #@info "Quaternion case unit group"
     Q, QtoZA = isquaternion_algebra(ZA)
     MQ = _get_order_from_gens(Q, [QtoZA\(ZAtoA\(elem_in_algebra(b))) for b in absolute_basis(M)])
     _gens =  _unit_group_generators_quaternion(MQ)
@@ -2093,23 +2095,79 @@ end
 #
 ################################################################################
 
+function _unit_reps(M, F)
+  dec = decompose(algebra(M))
+  D = get_attribute!(M, :unit_reps) do
+    return Dict{typeof(F), Vector{Vector{elem_type(dec[1][1])}}}()
+  end::Dict{typeof(F), Vector{Vector{elem_type(dec[1][1])}}}
+
+  if haskey(D, F)
+    @info "Unit representatives cached for this conductor ideal"
+    return D[F]
+  else
+    D[F] = __unit_reps(M, F)
+    return D[F]
+  end
+end
+
+function __unit_reps(M, F)
+  _assert_has_refined_wedderburn_decomposition(algebra(M))
+  dec = decompose(algebra(M))
+  unit_reps = Vector{elem_type(dec[1][1])}[]
+  for (B, mB) in dec
+    MinB = Order(B, elem_type(B)[(mB\(mB(one(B)) * elem_in_algebra(b))) for b in absolute_basis(M)])
+    UB = _unit_group_generators_maximal_simple(MinB)
+    FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
+    @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
+    FinB.order = MinB
+    Q, MinBtoQ = quo(MinB, FinB)
+    for u in UB
+      @assert u in MinB && inv(u) in MinB
+      #@show u in FinB
+    end
+    UB_reduced = [MinBtoQ(MinB(u)) for u in UB]
+    #@show UB_reduced
+    __units = collect(zip(UB, UB_reduced))
+
+    #@show length(UB)
+    #@show UB_reduced
+    @info "computing closure"
+    @info "dimension $(dim(B))"
+
+    cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+
+    #@show length(cl)
+    push!(unit_reps, first.(cl))
+  end
+  return unit_reps
+end
+
+function _assert_has_refined_wedderburn_decomposition(A)
+  get_attribute!(A, :refined_wedderburn) do
+    dec = decompose(A)
+    _compute_matrix_algebras_from_reps2(A, dec)
+    return true
+  end
+  return true
+end
+
 function __isprincipal(O, I, side = :right)
   A = algebra(O)
+  _assert_has_refined_wedderburn_decomposition(A)
   dec = decompose(A)
-  Hecke._compute_matrix_algebras_from_reps2(A, dec)
   M = maximal_order(O)
 
   fl, alpha = _isprincipal_maximal(I * M, M, :right)
 
   if !fl
-    #@info "Not principal over maximal order"
+    @info "Not principal over maximal order"
     return false, zero(A)
   end
 
   # Now test local freeness at the primes dividing the index [M : O]
   for p in prime_divisors(index(O, M))
     if !islocally_free(O, I, p, side = :right)[1]
-      #@info "Not locally free at $p"
+      @info "Not locally free at $p"
       return false, zero(A)
     end
   end
@@ -2118,6 +2176,7 @@ function __isprincipal(O, I, side = :right)
 
   Z, ZtoA = center(A)
   Fl = conductor(O, M, :left)
+  @show det(basis_matrix(Fl))
 
   FinZ = _as_ideal_of_smaller_algebra(ZtoA, Fl)
   # Compute FinZ*OA but as an ideal of O
@@ -2142,16 +2201,6 @@ function __isprincipal(O, I, side = :right)
   #@show det(basis_matrix(F))
   #@show det(basis_matrix(conductor(O, M, :left) * conductor(O, M, :right)))
 
-  has_unit_reps = false
-  _unit_reps = get_attribute(O, :unit_reps)
-  if  _unit_reps === nothing
-    unit_reps = []
-  else
-    unit_reps = _unit_reps
-    has_unit_reps = true
-    #@info "unit reps cached"
-  end
-
   bases = Vector{elem_type(A)}[]
 
   IM = I * M
@@ -2171,35 +2220,10 @@ function __isprincipal(O, I, side = :right)
     #  @show MinC
     #  @show nice_order(MinC)
     #end
-    if !has_unit_reps
-      UB = _unit_group_generators_maximal_simple(MinB)
-      FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
-      @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
-      FinB.order = MinB
-      Q, MinBtoQ = quo(MinB, FinB)
-      for u in UB
-        @assert u in MinB && inv(u) in MinB
-        #@show u in FinB
-      end
-      UB_reduced = [MinBtoQ(MinB(u)) for u in UB]
-      #@show UB_reduced
-      __units = collect(zip(UB, UB_reduced))
-
-      #@show length(UB)
-      #@show UB_reduced
-      #@info "computing closure"
-      cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
-
-      #@show length(cl)
-      push!(unit_reps, first.(cl))
-    end
-
     #@show FinB
   end
 
-  if !has_unit_reps
-    set_attribute!(O, :unit_reps, unit_reps)
-  end
+  unit_reps = _unit_reps(M, F)
 
   decc = copy(dec)
   p = sortperm(unit_reps, by = x -> length(x))
@@ -2225,7 +2249,7 @@ function __isprincipal(O, I, side = :right)
   
   local_coeffs = Vector{Vector{fmpq}}[]
 
-  #@info "preprocessing units"
+  @info "preprocessing units"
   for i in 1:length(dec)
     _local_coeffs = Vector{fmpq}[]
     for u in units_sorted[i]
@@ -2241,7 +2265,7 @@ function __isprincipal(O, I, side = :right)
   #end
 
   # Try to reduce the number of tests
-  #@info "Collected information for the last block"
+  @info "Collected information for the last block"
   l = bases_offsets_and_lengths[end][2]
   o = bases_offsets_and_lengths[end][1]
   indices_integral = Vector{Int}[Int[] for i in 1:l]
@@ -2256,10 +2280,10 @@ function __isprincipal(O, I, side = :right)
     end
   end
 
-  #@info "Lengths $(length.(local_coeffs))"
-  #@info "Unrestricted length of last block: $(length(local_coeffs[end]))"
-  #@info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
-  #@info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
+  @info "Lengths $(length.(local_coeffs))"
+  @info "Unrestricted length of last block: $(length(local_coeffs[end]))"
+  @info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
+  @info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
 
   dd = dim(A)
 
@@ -2268,10 +2292,17 @@ function __isprincipal(O, I, side = :right)
 
   fl, x = recursive_iterator([length(local_coeffs[i]) for i in 1:length(dec)], dd, local_coeffs, bases_offsets_and_lengths, indices_integral, indices_nonintegral)
   if fl
+    @info "New method says $fl"
     _vtemp = reduce(.+, (local_coeffs[i][x[i]] for i in 1:length(local_coeffs)))
     el = A(_vtemp * (H * special_basis_matrix))
     @assert el * O == I
+    @info "Checking with old method"
+    ffl, xx = _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, special_basis_matrix, indices_integral, indices_nonintegral, A)
+    @assert ffl
+    return true, el
   end
+
+  return false, zero(A)
 
   ffl, xx = _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, special_basis_matrix, indices_integral, indices_nonintegral, A)
 
@@ -2329,7 +2360,7 @@ function _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, 
   for idx in cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec) - 1])
     k += 1
     if k % 1000000 == 0
-      #@info "$k"
+      @info "$k"
     end
     w = local_coeffs[1][idx[1]]
     for i in 1:dd
@@ -2351,7 +2382,7 @@ function _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, 
       ll[j] += 1
       continue
     else
-      #@info "good"
+      @info "good"
     end
     o = bases_offsets_and_lengths[end][1]
     l = bases_offsets_and_lengths[end][2]
@@ -2369,8 +2400,8 @@ function _old_optimization(dd, local_coeffs, dec, bases_offsets_and_lengths, H, 
       end
     end
   end
-  #@info "when I could have skipped $ll"
-  #@info "Skipped $l things"
+  @info "when I could have skipped $ll"
+  @info "Skipped $l things"
 
   return false, zero(A)
 end
@@ -2495,4 +2526,88 @@ function _isisomorphic_generic(X, Y, side = :right)
     @assert alpha * X == Y
   end
   return fl, alpha
+end
+
+################################################################################
+#
+#  Is Aut(G)-isomomorphic?
+#
+################################################################################
+
+function _is_aut_isomorphic(X, Y, side = :right)
+  QG = algebra(order(X))
+  ZG = order(X)
+  G = group(QG)
+  n = order(G)
+  rep1 = fmpq_mat[ representation_matrix(QG(g), :right) for g in gens(G)];
+  A = automorphisms(G)
+  isos = fmpq_mat[];
+  @info "Computing automorphisms and induced maps"
+  for a in A
+    rep2 = [ representation_matrix(QG(a(g)), :right) for g in gens(G)];
+    brep = _basis_of_commutator_algebra(rep1, rep2);
+    @assert det(brep[1]) != 0
+    t = brep[1]
+    @assert all([representation_matrix(QG(a(g)), :right) * t == t * representation_matrix(QG(g), :right) for g in gens(G)])
+    push!(isos, t);
+  end
+  @info "Testing $(length(isos)) isomorphisms"
+  for j in 1:length(isos);
+    @info "$(j)/$(length(isos))"
+    t = isos[j]
+    newbas = fmpq_mat(basis_matrix(Y)) * t
+    Ytwisted = ideal_from_lattice_gens(QG, order(Y), [elem_from_mat_row(QG, newbas, i) for i in 1:n]);
+    @assert _test_ideal_sidedness(Ytwisted, ZG, :right)
+    fl, _ = _isisomorphic_generic(X, Ytwisted, :right)
+    if fl
+      return true
+    end
+  end
+  return false
+end
+
+function _twists(Y)
+  res = typeof(Y)[]
+  QG = algebra(order(Y))
+  ZG = order(Y)
+  G = group(QG)
+  n = order(G)
+  rep1 = fmpq_mat[ representation_matrix(QG(g), :right) for g in gens(G)];
+  A = automorphisms(G)
+  isos = fmpq_mat[];
+  @info "Computing automorphisms and induced maps"
+  for a in A
+    rep2 = [ representation_matrix(QG(a(g)), :right) for g in gens(G)];
+    brep = _basis_of_commutator_algebra(rep1, rep2);
+    @assert det(brep[1]) != 0
+    t = brep[1]
+    @assert all([representation_matrix(QG(a(g)), :right) * t == t * representation_matrix(QG(g), :right) for g in gens(G)])
+    push!(isos, t);
+  end
+  @info "Testing $(length(isos)) isomorphisms"
+  for j in 1:length(isos);
+    @info "$(j)/$(length(isos))"
+    t = isos[j]
+    newbas = fmpq_mat(basis_matrix(Y)) * t
+    Ytwisted = ideal_from_lattice_gens(QG, order(Y), [elem_from_mat_row(QG, newbas, i) for i in 1:n]);
+    @assert _test_ideal_sidedness(Ytwisted, ZG, :right)
+    push!(res, Ytwisted)
+  end
+  return res
+end
+
+function twist_classes(Y)
+  Ytwist = _twists(Y)
+  res = typeof(Y)[]
+  for i in 1:length(Ytwist)
+    @info "#Twists/Aut(G): $i, $(length(res))"
+    found = false
+    if any(Z -> _isisomorphic_generic(Z, Ytwist[i])[1], res)
+      found = true
+    end
+    if !found
+      push!(res, Ytwist[i])
+    end
+  end
+  return res
 end
