@@ -270,12 +270,14 @@ end
 ################################################################################
 
 # T == elem_type(base_ring), S == dense_matrix_type(coefficient_ring)
-mutable struct AlgMat{T, S} <: AbsAlgAss{T}
+@attributes mutable struct AlgMat{T, S} <: AbsAlgAss{T}
   base_ring::Ring
   coefficient_ring::Ring
   one::S
   basis
   basis_matrix # matrix over the base_ring
+  basis_matrix_rref
+  basis_matrix_transpose_rref
   dim::Int
   degree::Int
   issimple::Int

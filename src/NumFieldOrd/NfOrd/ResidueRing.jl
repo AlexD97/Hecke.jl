@@ -278,11 +278,13 @@ end
 
 function mul!(z::AbsOrdQuoRingElem, x::AbsOrdQuoRingElem, y::AbsOrdQuoRingElem)
   z.elem = mul!(z.elem, x.elem, y.elem)
+  z.isreduced = false
   return _easy_mod(z)
 end
 
 function add!(z::AbsOrdQuoRingElem, x::AbsOrdQuoRingElem, y::AbsOrdQuoRingElem)
   z.elem = add!(z.elem, x.elem, y.elem)
+  z.isreduced = false
   return _easy_mod(z)
 end
 
@@ -290,6 +292,7 @@ addeq!(x::AbsOrdQuoRingElem, y::AbsOrdQuoRingElem) = add!(x, x, y)
 
 function sub!(z::AbsOrdQuoRingElem, x::AbsOrdQuoRingElem, y::AbsOrdQuoRingElem)
   z.elem = sub!(z.elem, x.elem, y.elem)
+  z.isreduced = false
   return _easy_mod(z)
 end
 
@@ -397,6 +400,7 @@ end
 
 function zero!(x::AbsOrdQuoRingElem)
   zero!(x.elem)
+  x.isreduced = true
   return x
 end
 

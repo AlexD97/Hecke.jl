@@ -2110,34 +2110,111 @@ function _unit_reps(M, F)
   end
 end
 
+function _describe(B)
+  d = dimension_of_center(B)
+  s = div(dim(B), d)
+  n = isqrt(s)
+  if isdefined(B, :isomorphic_full_matrix_algebra)
+    ismatalg = true
+  else
+    ismatalg = false
+  end
+  if ismatalg
+    return "Full matrix algebra of degree $n over field of degree $d"
+  else
+    return "Divison ring of degree $n over field of degree $d"
+  end
+end
+
+global _debug = []
+
+function __unit_reps_simple(M, F)
+  #push!(_debug, (M, F))
+  B = algebra(M)
+  @info _describe(B)
+  @info "Computing generators of the maximal order"
+  UB = _unit_group_generators_maximal_simple(M)
+  Q, MtoQ = quo(M, F)
+  for u in UB
+    @assert u in M && inv(u) in M
+    #@show u in FinB
+  end
+  @info "Number of generators: $(length(UB))"
+  UB_reduced = unique!([MtoQ(M(u)) for u in UB])
+  #@show UB_reduced
+  @show norm(F)
+  #QQ, MtoQQ = _quo_as_mat_alg_small(M, F)
+  QQ = FakeAbsOrdQuoRing(M, F)
+  _UB_reduced = unique!([QQ(M(u)) for u in UB])
+
+  #@show length(UB)
+  #@show UB_reduced
+  @info "computing closure"
+  @info "dimension $(dim(B))"
+
+  if isdefined(B, :isomorphic_full_matrix_algebra)
+    # It is faster to compute products in M_n(F) than in an associative algebra
+    local C::AlgMat{nf_elem, Generic.MatSpaceElem{nf_elem}}
+    local BtoC::Hecke.AbsAlgAssMorGen{AlgAss{fmpq}, AlgMat{nf_elem, AbstractAlgebra.Generic.MatSpaceElem{nf_elem}}, AbstractAlgebra.Generic.MatSpaceElem{nf_elem}, fmpq_mat}
+    #local BtoC::morphism_type(typeof(B), AlgMat{nf_elem, Generic.MatSpaceElem{nf_elem}})
+    C, BtoC = B.isomorphic_full_matrix_algebra
+    UBinC = elem_type(C)[BtoC(u)::elem_type(C) for u in UB]
+    ___units = collect(zip(UBinC, UB_reduced))
+    ___units_ = collect(zip(UBinC, _UB_reduced))
+    ___units_all = collect(zip(UBinC, UB_reduced, _UB_reduced))
+    #@time cl = closure(___units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+    @time cl = closure(___units_, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+    # @show length(cl), length(cl2)
+    # @assert length(cl) == length(cl2)
+    # @time cl = closure(___units_all, (x, y) -> 
+    #                    begin
+    #                   #   if !(MtoQ\(x[2] * y[2]) - lift(x[3] * y[3]) in F)
+    #                   #     push!(_debug, ((M(BtoC\x[1]), x[2], x[3]), (M(BtoC\y[1]), y[2], y[3])))
+    #                   #     @show "oops";
+    #                   #     @show coordinates(MtoQ\x[2])
+    #                   #     @show coordinates(MtoQ\y[2]);
+    #                   #     @show lift(x[3]) - M(BtoC\(x[1])) in F
+    #                   #     @show lift(y[3]) - M(BtoC\(y[1])) in F
+    #                   #     @show MtoQ\x[2] - M(BtoC\(x[1])) in F
+    #                   #     @show MtoQ\y[2] - M(BtoC\(y[1])) in F
+    #                   #     @show (x[3] * y[3]).v
+    #                   #     @show QQ(lift(x[3]) * lift(y[3])).v
+    #                   #     @show (QQ(M(BtoC\(x[1] * y[1])))).v
+    #                   #    error("asdsdsd")
+    #                   #  end;
+    #                   #  w = x[3] * y[3];
+    #                   #@assert QQ(lift(w)) == w;
+    #                 (x[1] * y[1], x[2] * y[2], x[3] * y[3]);
+    #               end,
+    #                 eq = (x, y) -> begin
+    #                # @assert MtoQ\x[2] - lift(x[3]) in F "oooops"; @assert MtoQ\y[2] - lift(y[3]) in F "oooops2"; if (x[2] == y[2]) != (x[3] == y[3]); @show coordinates(MtoQ\y[2]), coordinates(MtoQ\x[2]); @show coordinates(lift(x[3])); @show coordinates(lift(y[3])); @show x[3]; @show y[3]; error("asss"); end;
+    #                x[2] == y[2];
+    #                end
+    #               )
+    # #@time cl2 = closure(___units_, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+    @show length(cl)
+    #@show length(cl2)
+    #@assert first.(cl) == first.(cl2)
+    #push!(_debug, cl)
+    return elem_type(B)[ (BtoC\(c[1]))::elem_type(B) for c in cl ]
+  else
+    __units = collect(zip(UB, UB_reduced))
+    cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+    return first.(cl)
+  end
+end
+
 function __unit_reps(M, F)
   _assert_has_refined_wedderburn_decomposition(algebra(M))
   dec = decompose(algebra(M))
   unit_reps = Vector{elem_type(dec[1][1])}[]
   for (B, mB) in dec
     MinB = Order(B, elem_type(B)[(mB\(mB(one(B)) * elem_in_algebra(b))) for b in absolute_basis(M)])
-    UB = _unit_group_generators_maximal_simple(MinB)
     FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
     @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
     FinB.order = MinB
-    Q, MinBtoQ = quo(MinB, FinB)
-    for u in UB
-      @assert u in MinB && inv(u) in MinB
-      #@show u in FinB
-    end
-    UB_reduced = [MinBtoQ(MinB(u)) for u in UB]
-    #@show UB_reduced
-    __units = collect(zip(UB, UB_reduced))
-
-    #@show length(UB)
-    #@show UB_reduced
-    @info "computing closure"
-    @info "dimension $(dim(B))"
-
-    cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
-
-    #@show length(cl)
-    push!(unit_reps, first.(cl))
+    _unit_reps =  __unit_reps_simple(MinB, FinB)
+    push!(unit_reps, _unit_reps)
   end
   return unit_reps
 end
@@ -2149,6 +2226,32 @@ function _assert_has_refined_wedderburn_decomposition(A)
     return true
   end
   return true
+end
+
+function _get_a_twosided_conductor(O, M)
+  A = algebra(O)
+  Z, ZtoA = center(A)
+  Fl = conductor(O, M, :left)
+
+  FinZ = _as_ideal_of_smaller_algebra(ZtoA, Fl)
+  # Compute FinZ*OA but as an ideal of O
+  bM = basis(M, copy = false)
+  bFinZ = basis(FinZ, copy = false)
+  basis_F = Vector{elem_type(A)}()
+  for x in bM
+    for y in bFinZ
+      yy = ZtoA(y)
+      t = yy * elem_in_algebra(x, copy = false)
+      push!(basis_F, t)
+    end
+  end
+
+  for b in basis_F
+    @assert b in O
+  end
+
+  F = ideal_from_lattice_gens(A, O, basis_F, :twosided)
+  return F
 end
 
 function __isprincipal(O, I, side = :right)
@@ -2176,7 +2279,6 @@ function __isprincipal(O, I, side = :right)
 
   Z, ZtoA = center(A)
   Fl = conductor(O, M, :left)
-  @show det(basis_matrix(Fl))
 
   FinZ = _as_ideal_of_smaller_algebra(ZtoA, Fl)
   # Compute FinZ*OA but as an ideal of O
@@ -2249,23 +2351,28 @@ function __isprincipal(O, I, side = :right)
   
   local_coeffs = Vector{Vector{fmpq}}[]
 
+  inv_special_basis_matrix_Hinv = inv_special_basis_matrix * Hinv
+
   @info "preprocessing units"
   for i in 1:length(dec)
     _local_coeffs = Vector{fmpq}[]
+    m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
+    alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
     for u in units_sorted[i]
-      aui = dec_sorted[i][2](dec_sorted[i][2]\(alpha)) * dec_sorted[i][2](u)
-      auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix * Hinv)
+      aui =  alphai * m(u)
+      auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix_Hinv)
       push!(_local_coeffs, auiasvec)
     end
     push!(local_coeffs, _local_coeffs)
   end
+  @info "done"
 
   #for i in 1:length(dec)
   #  @show local_coeffs
   #end
 
   # Try to reduce the number of tests
-  @info "Collected information for the last block"
+  #@info "Collected information for the last block"
   l = bases_offsets_and_lengths[end][2]
   o = bases_offsets_and_lengths[end][1]
   indices_integral = Vector{Int}[Int[] for i in 1:l]
@@ -2280,10 +2387,10 @@ function __isprincipal(O, I, side = :right)
     end
   end
 
-  @info "Lengths $(length.(local_coeffs))"
-  @info "Unrestricted length of last block: $(length(local_coeffs[end]))"
-  @info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
-  @info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
+  # @info "Lengths $(length.(local_coeffs))"
+  # @info "Unrestricted length of last block: $(length(local_coeffs[end]))"
+  # @info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
+  # @info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
 
   dd = dim(A)
 
@@ -2291,8 +2398,8 @@ function __isprincipal(O, I, side = :right)
   #@show length(cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec) - 1]))
 
   fl, x = recursive_iterator([length(local_coeffs[i]) for i in 1:length(dec)], dd, local_coeffs, bases_offsets_and_lengths, indices_integral, indices_nonintegral)
+  @info "New method says $fl"
   if fl
-    @info "New method says $fl"
     _vtemp = reduce(.+, (local_coeffs[i][x[i]] for i in 1:length(local_coeffs)))
     el = A(_vtemp * (H * special_basis_matrix))
     @assert el * O == I
@@ -2309,37 +2416,7 @@ function __isprincipal(O, I, side = :right)
   @assert fl === ffl
   return ffl, xx
 
-#  #@show local_coeffs[end]
-#
-#  @info "now iterating"
-#  k = 0
-#  l = 0
-#  d = length(dec)
-#  dd = dim(A)
-#  vtemp = [zero(fmpq) for i in 1:dd]
-#  for idx in cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec)])
-#    k += 1
-#    if k % 10000 == 0
-#      @info "$k"
-#    end
-#    w = local_coeffs[1][idx[1]]
-#    for i in 1:dd
-#      ccall((:fmpq_set, libflint), Ref{Nothing}, (Ref{fmpq}, Ref{fmpq}), vtemp[i], w[i])
-#    end
-#    #@show vtemp
-#    for j in 2:length(dec)
-#      w = local_coeffs[j][idx[j]]
-#      for i in 1:dd
-#        add!(vtemp[i], vtemp[i], w[i])
-#      end
-#      #@show j, vtemp
-#    end
-#    if all(isintegral, vtemp)
-#      l += 1
-#      return true, A(vtemp * (H * special_basis_matrix))
-#    end
-#  end
-#
+
 #  for u in Iterators.product(unit_reps...)
 #    uu = sum(dec[i][2](u[i]) for i in 1:length(dec))
 #    aui = [ dec[i][2](dec[i][2]\(alpha)) * dec[i][2](u[i]) for i in 1:length(dec)]
@@ -2504,6 +2581,7 @@ end
 ################################################################################
 
 function _isisomorphic_generic(X, Y, side = :right)
+  @assert side == :right
   C = _colon_raw(Y, X, :right)
   CI = ideal(algebra(X), C)
   for x in basis(CI)
@@ -2534,9 +2612,24 @@ end
 #
 ################################################################################
 
-function _is_aut_isomorphic(X, Y, side = :right)
+function _is_aut_isomorphic(X, Y; side::Symbol = :right)
+  if side === :right
+    return _is_aut_isomorphic_right(X, Y)
+  elseif side === :left
+    _, op = opposite_algebra(algebra(order(X)))
+    Xop = op(X)
+    Yop = op(Y)
+    Xop.order = order(X)
+    Yop.order = order(X)
+    return _is_aut_isomorphic_right(Xop, Yop)
+  end
+end
+
+function _is_aut_isomorphic_right(X, Y)
   QG = algebra(order(X))
   ZG = order(X)
+  @assert _test_ideal_sidedness(X, ZG, :right)
+  @assert _test_ideal_sidedness(Y, ZG, :right)
   G = group(QG)
   n = order(G)
   rep1 = fmpq_mat[ representation_matrix(QG(g), :right) for g in gens(G)];
@@ -2610,4 +2703,15 @@ function twist_classes(Y)
     end
   end
   return res
+end
+
+function representation_matrix_wrt(x::AlgAssAbsOrdElem, v::Vector, action = :left)
+  O = parent(x)
+  M = FakeFmpqMat(basis_matrix(elem_in_algebra.(v)))
+  M1 = inv(M)
+  B = FakeFmpqMat(representation_matrix(elem_in_algebra(x, copy = false), action))
+  B = mul!(B, M, B)
+  B = mul!(B, B, M1)
+  @assert B.den == 1
+  return B.num
 end

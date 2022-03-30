@@ -591,9 +591,13 @@ end
 
 (A::AlgGrp{T, S, R})() where {T, S, R} = AlgGrpElem{T, typeof(A)}(A)
 
-function (A::AlgAss{T})(c::Vector{T}) where {T}
+function (A::AlgAss{T})(c::Vector{T}; copy::Bool = true) where {T}
   length(c) != dim(A) && error("Dimensions don't match.")
-  return AlgAssElem{T, AlgAss{T}}(A, deepcopy(c))
+  if copy
+    return AlgAssElem{T, AlgAss{T}}(A, deepcopy(c))
+  else
+    return AlgAssElem{T, AlgAss{T}}(A, c)
+  end
 end
 
 function (A::AlgQuat{T})(c::Vector{T}) where {T}
