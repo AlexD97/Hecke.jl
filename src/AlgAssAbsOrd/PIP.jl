@@ -2354,7 +2354,7 @@ function __isprincipal(O, I, side = :right)
   inv_special_basis_matrix_Hinv = inv_special_basis_matrix * Hinv
 
   @info "preprocessing units"
-  for i in 1:length(dec)
+  @time for i in 1:length(dec)
     _local_coeffs = Vector{fmpq}[]
     m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
     alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
@@ -2366,6 +2366,36 @@ function __isprincipal(O, I, side = :right)
     push!(local_coeffs, _local_coeffs)
   end
   @info "done"
+
+  local_coeffs2 = Vector{Vector{fmpq}}[]
+  multi = 10
+  t1 = zero_matrix(QQ, multi * dim(A), dim(A))
+  t2 = zero_matrix(QQ, multi * dim(A), dim(A))
+  @info "new preprocessing units"
+  @time for i in 1:length(dec)
+    _local_coeffs = Vector{fmpq}[]
+    m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
+    alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
+    par = Iterators.partition(1:length(units_sorted[i]), multi * dim(A))
+    ui = units_sorted[i]
+    for p in par
+      for (j, j_index) in enumerate(p)
+        u =  ui[j_index]
+        aui =  alphai * m(u)
+        __set_row!(t1, j, coefficients(aui, copy = false))
+        #auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix_Hinv)
+        #push!(_local_coeffs, auiasvec)
+      end
+      mul!(t2, t1, inv_special_basis_matrix_Hinv)
+      for (j, j_index) in enumerate(p)
+        push!(_local_coeffs, fmpq[ t2[j, k] for k in 1:dim(A)])
+      end
+      #push!(_local_coeffs, auiasvec)
+    end
+    push!(local_coeffs2, _local_coeffs)
+  end
+  @info "done"
+  @assert local_coeffs == local_coeffs2
 
   #for i in 1:length(dec)
   #  @show local_coeffs

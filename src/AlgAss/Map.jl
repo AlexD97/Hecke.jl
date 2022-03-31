@@ -47,17 +47,22 @@ mutable struct AbsAlgAssMor{R, S, T} <: Map{R, S, HeckeMap, AbsAlgAssMor}
     z.imat = N
 
     function image(a)
-      for i in 1:dim(A)
-        z.c_t[1, i] = coefficients(a, copy = false)[i]
-      end
+      ca = coefficients(a, copy = false)
+      __set!(z.c_t, ca)
+      #for i in 1:dim(A)
+      #  z.c_t[1, i] = ca[i]
+      #end
       s = Vector{elem_type(base_ring(B))}(undef, dim(B))
-      #mul!(z.d_t, z.c_t, M) # there is no mul! for Generic.Mat
-      z.d_t = z.c_t * M
+      if T === fmpq_mat
+        mul!(z.d_t, z.c_t, M) # there is no mul! for Generic.Mat
+      else
+        z.d_t = z.c_t * M
+      end
       for i in 1:dim(B)
         s[i] = z.d_t[1, i]
       end
 
-      return B(s)
+      return B(s, copy = false)
     end
 
     function preimage(a)
@@ -74,6 +79,21 @@ mutable struct AbsAlgAssMor{R, S, T} <: Map{R, S, HeckeMap, AbsAlgAssMor}
 
     z.header = MapHeader(A, B, image, preimage)
     return z
+  end
+end
+
+function __set!(c_t, ca)
+  for i in 1:length(ca)
+    c_t[1, i] = ca[i]
+  end
+end
+
+function __set!(c_t::fmpq_mat, ca)
+  GC.@preserve c_t begin
+    for i in 1:length(ca)
+      t = ccall((:fmpq_mat_entry, libflint), Ptr{fmpq}, (Ref{fmpq_mat}, Int, Int), c_t, 0, i - 1)
+      ccall((:fmpq_set, libflint), Cvoid, (Ptr{fmpq}, Ref{fmpq}), t, ca[i])
+    end
   end
 end
 

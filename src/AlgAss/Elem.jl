@@ -600,9 +600,9 @@ function (A::AlgAss{T})(c::Vector{T}; copy::Bool = true) where {T}
   end
 end
 
-function (A::AlgQuat{T})(c::Vector{T}) where {T}
+function (A::AlgQuat{T})(c::Vector{T}; copy::Bool = true) where {T}
   length(c) != dim(A) && error("Dimensions don't match.")
-  return AlgAssElem{T, AlgQuat{T}}(A, deepcopy(c))
+  return AlgAssElem{T, AlgQuat{T}}(A, copy ? deepcopy(c) : c)
 end
 
 function Base.getindex(A::AbsAlgAss{T}, i::Int) where {T}

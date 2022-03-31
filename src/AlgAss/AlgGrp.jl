@@ -28,9 +28,9 @@ group(A::AlgGrp) = A.group
 
 has_one(A::AlgGrp) = true
 
-function (A::AlgGrp{T, S, R})(c::Vector{T}) where {T, S, R}
+function (A::AlgGrp{T, S, R})(c::Vector{T}; copy::Bool = false) where {T, S, R}
   length(c) != dim(A) && error("Dimensions don't match.")
-  return AlgGrpElem{T, typeof(A)}(A, c)
+  return AlgGrpElem{T, typeof(A)}(A, copy ? deepcopy(c) : c)
 end
 
 @doc Markdown.doc"""
@@ -905,6 +905,17 @@ function _coefficients_of_restricted_scalars!(y, x)
     end
   end
   return y
+end
+
+function __set_row!(y::fmpq_mat, k, c)
+  GC.@preserve y
+  begin
+    for i in 1:length(c)
+      t = ccall((:fmpq_mat_entry, libflint), Ptr{fmpq}, (Ref{fmpq_mat}, Int, Int), y, k - 1, i - 1)
+      ccall((:fmpq_set, libflint), Cvoid, (Ptr{fmpq}, Ref{fmpq}), t, c[i])
+    end
+  end
+  nothing
 end
 
 function __set!(y, k, c)
