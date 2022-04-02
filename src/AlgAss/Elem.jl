@@ -316,7 +316,7 @@ function mul!(c::AlgGrpElem{T, S}, a::AlgGrpElem{T, S}, b::AlgGrpElem{T, S}) whe
 
   if c === a || c === b
     z = parent(a)()
-    mul!(z, a, b)
+    z = mul!(z, a, b)
     return z
   end
 
@@ -332,8 +332,13 @@ function mul!(c::AlgGrpElem{T, S}, a::AlgGrpElem{T, S}, b::AlgGrpElem{T, S}) whe
 
   for i in 1:d
     for j in 1:d
-      _v = v[mA[i, j]]
-      _v = addmul!(_v, ca[i], cb[j])
+      k = mA[i, j]
+      _v = v[k]
+      if ismutabletype(T)
+        _v = addmul!(_v, ca[i], cb[j])
+      else
+        v[k] = addmul!(_v, ca[i], cb[j])
+      end
     end
   end
 
