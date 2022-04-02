@@ -323,12 +323,17 @@ function mul!(c::AlgGrpElem{T, S}, a::AlgGrpElem{T, S}, b::AlgGrpElem{T, S}) whe
   v = coefficients(c, copy = false)
 
   for i in 1:d
-    v[i] = zero(base_ring(A))
+    v[i] = zero!(v[i])
   end
+
+  mA = multiplication_table(A, copy = false)
+  ca = coefficients(a, copy = false)
+  cb = coefficients(b, copy = false)
 
   for i in 1:d
     for j in 1:d
-      v[multiplication_table(A, copy = false)[i, j]] += coefficients(a, copy = false)[i] * coefficients(b, copy = false)[j]
+      _v = v[mA[i, j]]
+      _v = addmul!(_v, ca[i], cb[j])
     end
   end
 

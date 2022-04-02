@@ -621,6 +621,9 @@ mutable struct AbsAlgAssMorGen{S, T, U, V} <: Map{S, T, HeckeMap, AbsAlgAssMorGe
   tempdomain::U
   tempcodomain::V
   tempcodomain2::V
+  tempcodomain_threaded::Vector{V}
+  tempcodomain2_threaded::Vector{V}
+
   M::U
   Minv::V
 
@@ -631,6 +634,9 @@ mutable struct AbsAlgAssMorGen{S, T, U, V} <: Map{S, T, HeckeMap, AbsAlgAssMorGe
     z.M = M
     z.tempcodomain = zero_matrix(base_ring(Minv), 1, nrows(Minv))
     z.tempcodomain2 = zero_matrix(base_ring(Minv), 1, ncols(Minv))
+    z.tempcodomain_threaded = [zero_matrix(base_ring(Minv), 1, nrows(Minv)) for i in 1:Threads.nthreads()]
+    z.tempcodomain2_threaded = [zero_matrix(base_ring(Minv), 1, ncols(Minv)) for i in 1:Threads.nthreads()]
+
     z.Minv = Minv
     return z
   end
@@ -662,11 +668,19 @@ end
 
 function preimage(f::AbsAlgAssMorGen, z)
   @assert parent(z) === codomain(f)
-  _coefficients_of_restricted_scalars!(f.tempcodomain, z)
-  mul!(f.tempcodomain2, f.tempcodomain, f.Minv)
-  v = Vector{eltype(f.tempcodomain)}(undef, ncols(f.tempcodomain2))
+  if Threads.nthreads() > 1
+    ftc = f.tempcodomain_threaded[Threads.threadid()]
+    ftc2 = f.tempcodomain2_threaded[Threads.threadid()]
+  else
+    ftc = f.tempcodomain
+    ftc2 = f.tempcodomain2
+  end
+
+  _coefficients_of_restricted_scalars!(ftc, z)
+  mul!(ftc2, ftc, f.Minv)
+  v = Vector{eltype(ftc)}(undef, ncols(ftc2))
   for i in 1:length(v)
-    @inbounds v[i] = @inbounds f.tempcodomain2[1, i]
+    @inbounds v[i] = @inbounds ftc2[1, i]
   end
   return domain(f)(v, copy = false)
 end
@@ -913,6 +927,17 @@ function __set_row!(y::fmpq_mat, k, c)
     for i in 1:length(c)
       t = ccall((:fmpq_mat_entry, libflint), Ptr{fmpq}, (Ref{fmpq_mat}, Int, Int), y, k - 1, i - 1)
       ccall((:fmpq_set, libflint), Cvoid, (Ptr{fmpq}, Ref{fmpq}), t, c[i])
+    end
+  end
+  nothing
+end
+
+function __set_row!(c::Vector{fmpq}, y::fmpq_mat, k)
+  GC.@preserve y
+  begin
+    for i in 1:length(c)
+      t = ccall((:fmpq_mat_entry, libflint), Ptr{fmpq}, (Ref{fmpq_mat}, Int, Int), y, k - 1, i - 1)
+      ccall((:fmpq_set, libflint), Cvoid, (Ref{fmpq}, Ptr{fmpq}), c[i], t)
     end
   end
   nothing

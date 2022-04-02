@@ -2098,8 +2098,8 @@ end
 function _unit_reps(M, F)
   dec = decompose(algebra(M))
   D = get_attribute!(M, :unit_reps) do
-    return Dict{typeof(F), Vector{Vector{elem_type(dec[1][1])}}}()
-  end::Dict{typeof(F), Vector{Vector{elem_type(dec[1][1])}}}
+    return Dict{typeof(F), Vector{Vector{elem_type(algebra(M))}}}()
+  end::Dict{typeof(F), Vector{Vector{elem_type(algebra(M))}}}
 
   if haskey(D, F)
     @info "Unit representatives cached for this conductor ideal"
@@ -2196,7 +2196,14 @@ function __unit_reps_simple(M, F)
     #@show length(cl2)
     #@assert first.(cl) == first.(cl2)
     #push!(_debug, cl)
-    return elem_type(B)[ (BtoC\(c[1]))::elem_type(B) for c in cl ]
+    to_return = Vector{elem_type(B)}(undef, length(cl))
+    @info "Mapping back"
+    @time Threads.@threads for i in 1:length(cl)
+      to_return[i] = BtoC\(cl[i][1])
+    end
+    #@time to_return2 = elem_type(B)[ (BtoC\(c[1]))::elem_type(B) for c in cl ]
+    #@assert to_return == to_return2
+    return to_return
   else
     __units = collect(zip(UB, UB_reduced))
     cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
@@ -2207,14 +2214,14 @@ end
 function __unit_reps(M, F)
   _assert_has_refined_wedderburn_decomposition(algebra(M))
   dec = decompose(algebra(M))
-  unit_reps = Vector{elem_type(dec[1][1])}[]
+  unit_reps = Vector{elem_type(algebra(M))}[]
   for (B, mB) in dec
     MinB = Order(B, elem_type(B)[(mB\(mB(one(B)) * elem_in_algebra(b))) for b in absolute_basis(M)])
     FinB = ideal_from_lattice_gens(B, elem_type(B)[(mB\(b)) for b in absolute_basis(F)])
     @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
     FinB.order = MinB
     _unit_reps =  __unit_reps_simple(MinB, FinB)
-    push!(unit_reps, _unit_reps)
+    push!(unit_reps, [mB(x) for x in _unit_reps])
   end
   return unit_reps
 end
@@ -2353,56 +2360,54 @@ function __isprincipal(O, I, side = :right)
 
   inv_special_basis_matrix_Hinv = inv_special_basis_matrix * Hinv
 
-  @info "preprocessing units"
-  @time for i in 1:length(dec)
-    _local_coeffs = Vector{fmpq}[]
-    m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
-    alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
-    for u in units_sorted[i]
-      aui =  alphai * m(u)
-      auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix_Hinv)
-      push!(_local_coeffs, auiasvec)
-    end
-    push!(local_coeffs, _local_coeffs)
-  end
-  @info "done"
+  #@info "preprocessing units"
+  #@time for i in 1:length(dec)
+  #  _local_coeffs = Vector{fmpq}[]
+  #  m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
+  #  alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
+  #  for u in units_sorted[i]
+  #    aui =  alphai * u
+  #    auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix_Hinv)
+  #    push!(_local_coeffs, auiasvec)
+  #  end
+  #  push!(local_coeffs, _local_coeffs)
+  #end
+  #@info "done"
 
-  local_coeffs2 = Vector{Vector{fmpq}}[]
-  multi = 10
-  t1 = zero_matrix(QQ, multi * dim(A), dim(A))
-  t2 = zero_matrix(QQ, multi * dim(A), dim(A))
   @info "new preprocessing units"
-  @time for i in 1:length(dec)
-    _local_coeffs = Vector{fmpq}[]
-    m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
-    alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
-    par = Iterators.partition(1:length(units_sorted[i]), multi * dim(A))
-    ui = units_sorted[i]
-    for p in par
-      for (j, j_index) in enumerate(p)
-        u =  ui[j_index]
-        aui =  alphai * m(u)
-        __set_row!(t1, j, coefficients(aui, copy = false))
-        #auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix_Hinv)
-        #push!(_local_coeffs, auiasvec)
-      end
-      mul!(t2, t1, inv_special_basis_matrix_Hinv)
-      for (j, j_index) in enumerate(p)
-        push!(_local_coeffs, fmpq[ t2[j, k] for k in 1:dim(A)])
-      end
-      #push!(_local_coeffs, auiasvec)
-    end
-    push!(local_coeffs2, _local_coeffs)
-  end
+  local_coeffs = _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted, inv_special_basis_matrix_Hinv)
+
+  #@time for i in 1:length(dec)
+  #  _local_coeffs = Vector{fmpq}[]
+  #  m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
+  #  alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
+  #  par = Iterators.partition(1:length(units_sorted[i]), multi * dim(A))
+  #  ui = units_sorted[i]
+  #  for p in par
+  #    for (j, j_index) in enumerate(p)
+  #      u =  ui[j_index]
+  #      aui =  alphai * u
+  #      __set_row!(t1, j, coefficients(aui, copy = false))
+  #      #auiasvec = _eltseq(matrix(QQ, 1, dim(A), coefficients(aui)) * inv_special_basis_matrix_Hinv)
+  #      #push!(_local_coeffs, auiasvec)
+  #    end
+  #    mul!(t2, t1, inv_special_basis_matrix_Hinv)
+  #    for (j, j_index) in enumerate(p)
+  #      push!(_local_coeffs, fmpq[ t2[j, k] for k in 1:dim(A)])
+  #    end
+  #    #push!(_local_coeffs, auiasvec)
+  #  end
+  #  push!(local_coeffs2, _local_coeffs)
+  #end
   @info "done"
-  @assert local_coeffs == local_coeffs2
+  #@assert local_coeffs == local_coeffs2
 
   #for i in 1:length(dec)
   #  @show local_coeffs
   #end
 
   # Try to reduce the number of tests
-  #@info "Collected information for the last block"
+  @info "Collected information for the last block"
   l = bases_offsets_and_lengths[end][2]
   o = bases_offsets_and_lengths[end][1]
   indices_integral = Vector{Int}[Int[] for i in 1:l]
@@ -2427,6 +2432,7 @@ function __isprincipal(O, I, side = :right)
   # form the product of the first sets
   #@show length(cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec) - 1]))
 
+  @info "Starting the new method :)"
   fl, x = recursive_iterator([length(local_coeffs[i]) for i in 1:length(dec)], dd, local_coeffs, bases_offsets_and_lengths, indices_integral, indices_nonintegral)
   @info "New method says $fl"
   if fl
@@ -2744,4 +2750,106 @@ function representation_matrix_wrt(x::AlgAssAbsOrdElem, v::Vector, action = :lef
   B = mul!(B, B, M1)
   @assert B.den == 1
   return B.num
+end
+
+function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted, M, block_size = 1)
+  #push!(_debug, (alpha, A, dec_sorted, units_sorted, M, block_size))
+  res = Vector{Vector{fmpq}}[]
+  k = dim(A)
+  kblock = k * block_size
+  nt = Threads.nthreads()
+  #nt = 1
+
+  @assert size(M) == (k, k)
+  #@assert all(x -> ncols(x) == k, tmps)
+  #@assert all(x -> ncols(x) == k, tmps2)
+
+  @time for i in 1:length(dec_sorted)
+    ui = units_sorted[i]
+    @info "Allocating for result"
+    @time _local_coeffs = Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:k] for ii in 1:length(ui)]
+    m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
+    alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
+    kblock = div(length(ui), nt) 
+    if mod(length(ui), nt) != 0
+      kblock += 1
+    end
+    if length(ui) < 100
+      kblock = length(ui)
+    end
+    par = collect(Iterators.partition(1:length(ui), kblock))
+    @show length(ui)
+    @show nt
+    @show kblock
+    @show length(par)
+    @assert length(ui) < 100 || length(par) == nt
+    @info "Length/Blocksize: $(length(ui))/$(kblock)"
+    tmps = [zero_matrix(QQ, kblock, k) for i in 1:nt]
+    tmps2 = [zero_matrix(QQ, kblock, k) for i in 1:nt]
+    tmp_elem = [A() for i in 1:nt]
+    if length(par) >= nt
+      @info "Doing it in parallel"
+      GC.gc(true)
+      @time Threads.@threads for i in 1:length(par)
+        #thi = 1 #Threads.threadid()
+        thi = Threads.threadid()
+        p = par[i]
+        t1 = tmps[thi]
+        t2 = tmps2[thi]
+        t_elem = tmp_elem[thi]
+        @time for (j, j_index) in enumerate(p)
+          u =  ui[j_index]
+          #aui =  alphai * u
+          mul!(t_elem, alphai, u)
+          __set_row!(t1, j, coefficients(t_elem, copy = false))
+        end
+        @time mul!(t2, t1, M)
+        @time for (j, j_index) in enumerate(p)
+          Hecke.__set_row!(_local_coeffs[j_index], t2, j)
+        end
+      end
+    else
+      for i in 1:length(par)
+        #thi = 1 #Threads.threadid()
+        thi = 1
+        p = par[i]
+        t1 = tmps[thi]
+        t2 = tmps2[thi]
+        t_elem = tmp_elem[thi]
+        for (j, j_index) in enumerate(p)
+          u =  ui[j_index]
+          mul!(t_elem, alphai, u)
+          __set_row!(t1, j, coefficients(t_elem, copy = false))
+        end
+        mul!(t2, t1, M)
+        for (j, j_index) in enumerate(p)
+          Hecke.__set_row!(_local_coeffs[j_index], t2, j)
+        end
+      end
+    end
+    push!(res, _local_coeffs)
+  end
+  return res
+end
+
+function parallel_mul(list, M, res)
+  par = collect(Iterators.partition(1:length(list), nrows(M)))
+  Ms = [deepcopy(M) for i in 1:nt]
+  #res = Vector{fmpq}[]
+  Threads.@threads for i in 1:length(par)
+    thi = Threads.threadid()
+    p = par[i]
+    t1 = tmps[thi]
+    t2 = tmps2[thi]
+    for (j, j_index) in enumerate(p)
+      u = list[j_index]
+      Hecke.__set_row!(t1, j, u)
+    end
+    mul!(t2, t1, M)
+    for (j, j_index) in enumerate(p)
+      Hecke.__set_row!(res[j_index], t2, j)
+      #push!(res, fmpq[t2[j, k] for k in 1:ncols(M)])
+    end
+  end
+  return res
 end

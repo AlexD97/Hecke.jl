@@ -1653,3 +1653,7 @@ function _coprimality_test(f::T, g::T, h::T) where T <: Union{nmod_poly, fmpz_mo
     return false
   end
 end
+
+addmul!(z::nmod, x::nmod, y::nmod) = z + x * y
+
+addmul!(z::gfp_elem, x::gfp_elem, y::gfp_elem) = z + x * y
