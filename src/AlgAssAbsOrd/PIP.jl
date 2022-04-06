@@ -2206,13 +2206,15 @@ function __unit_reps_simple(M, F)
     return to_return
   else
     __units = collect(zip(UB, UB_reduced))
-    cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
+    @info "Closing in the other case"
+    @time cl = closure(__units, (x, y) -> (x[1] * y[1], x[2] * y[2]), eq = (x, y) -> x[2] == y[2])
     return first.(cl)
   end
 end
 
 function __unit_reps(M, F)
   _assert_has_refined_wedderburn_decomposition(algebra(M))
+  A = algebra(M)
   dec = decompose(algebra(M))
   unit_reps = Vector{elem_type(algebra(M))}[]
   for (B, mB) in dec
@@ -2221,7 +2223,12 @@ function __unit_reps(M, F)
     @assert Hecke._test_ideal_sidedness(FinB, MinB, :right)
     FinB.order = MinB
     _unit_reps =  __unit_reps_simple(MinB, FinB)
-    push!(unit_reps, [mB(x) for x in _unit_reps])
+    @info "Mapping back once more"
+    to_return = Vector{elem_type(A)}(undef, length(_unit_reps))
+    @time Threads.@threads for i in 1:length(_unit_reps)
+      to_return[i] = mB(_unit_reps[i])
+    end
+    push!(unit_reps, to_return)
   end
   return unit_reps
 end
@@ -2334,10 +2341,15 @@ function __isprincipal(O, I, side = :right)
 
   unit_reps = _unit_reps(M, F)
 
+  @info "copy"
   decc = copy(dec)
+  @info "sort"
   p = sortperm(unit_reps, by = x -> length(x))
+  @info "apply sort"
   dec_sorted = decc[p]
+  @info "apply sort"
   units_sorted = unit_reps[p]
+  @info "apply sort"
   bases_sorted = bases[p]
   bases_offsets_and_lengths = Tuple{Int, Int}[]
   k = 1
@@ -2349,6 +2361,7 @@ function __isprincipal(O, I, side = :right)
   #@show bases_offsets_and_lengths
 
   # let's collect the Z-basis of the Mi
+  @info "compute fancy basis"
   bases_sorted_cat = reduce(vcat, bases_sorted)
   special_basis_matrix = basis_matrix(bases_sorted_cat)
   inv_special_basis_matrix = inv(special_basis_matrix)
@@ -2358,6 +2371,7 @@ function __isprincipal(O, I, side = :right)
   
   local_coeffs = Vector{Vector{fmpq}}[]
 
+  @info "invert"
   inv_special_basis_matrix_Hinv = inv_special_basis_matrix * Hinv
 
   #@info "preprocessing units"
@@ -2669,7 +2683,7 @@ function _is_aut_isomorphic_right(X, Y)
   G = group(QG)
   n = order(G)
   rep1 = fmpq_mat[ representation_matrix(QG(g), :right) for g in gens(G)];
-  A = automorphisms(G)
+  A = outer_automorphisms(G)
   isos = fmpq_mat[];
   @info "Computing automorphisms and induced maps"
   for a in A
@@ -2702,7 +2716,8 @@ function _twists(Y)
   G = group(QG)
   n = order(G)
   rep1 = fmpq_mat[ representation_matrix(QG(g), :right) for g in gens(G)];
-  A = automorphisms(G)
+  A = outer_automorphisms(G)
+  @info "Outer automorphisms $(length(A))"
   isos = fmpq_mat[];
   @info "Computing automorphisms and induced maps"
   for a in A
@@ -2752,6 +2767,20 @@ function representation_matrix_wrt(x::AlgAssAbsOrdElem, v::Vector, action = :lef
   return B.num
 end
 
+function _local_coeffs_buffer(A, l)
+  D = get_attribute!(A, :local_coeffs_buffer) do
+    Dict{Int, Vector{Vector{fmpq}}}()
+  end::Dict{Int, Vector{Vector{fmpq}}}
+
+  if haskey(D, l)
+    @info "Local coefficient vector of length $l buffered"
+  end
+
+  return get!(D, l) do
+    Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:dim(A)] for ii in 1:l]
+  end::Vector{Vector{fmpq}}
+end
+
 function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted, M, block_size = 1)
   #push!(_debug, (alpha, A, dec_sorted, units_sorted, M, block_size))
   res = Vector{Vector{fmpq}}[]
@@ -2764,10 +2793,10 @@ function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted
   #@assert all(x -> ncols(x) == k, tmps)
   #@assert all(x -> ncols(x) == k, tmps2)
 
-  @time for i in 1:length(dec_sorted)
+  for i in 1:length(dec_sorted)
     ui = units_sorted[i]
     @info "Allocating for result"
-    @time _local_coeffs = Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:k] for ii in 1:length(ui)]
+    _local_coeffs = _local_coeffs_buffer(A, length(ui)) #Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:k] for ii in 1:length(ui)]
     m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
     alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
     kblock = div(length(ui), nt) 
@@ -2778,33 +2807,29 @@ function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted
       kblock = length(ui)
     end
     par = collect(Iterators.partition(1:length(ui), kblock))
-    @show length(ui)
-    @show nt
-    @show kblock
-    @show length(par)
     @assert length(ui) < 100 || length(par) == nt
-    @info "Length/Blocksize: $(length(ui))/$(kblock)"
+    #@info "Length/Blocksize: $(length(ui))/$(kblock)"
     tmps = [zero_matrix(QQ, kblock, k) for i in 1:nt]
     tmps2 = [zero_matrix(QQ, kblock, k) for i in 1:nt]
     tmp_elem = [A() for i in 1:nt]
     if length(par) >= nt
-      @info "Doing it in parallel"
+      #@info "Doing it in parallel"
       GC.gc(true)
-      @time Threads.@threads for i in 1:length(par)
+      Threads.@threads for i in 1:length(par)
         #thi = 1 #Threads.threadid()
         thi = Threads.threadid()
         p = par[i]
         t1 = tmps[thi]
         t2 = tmps2[thi]
         t_elem = tmp_elem[thi]
-        @time for (j, j_index) in enumerate(p)
+        for (j, j_index) in enumerate(p)
           u =  ui[j_index]
           #aui =  alphai * u
           mul!(t_elem, alphai, u)
           __set_row!(t1, j, coefficients(t_elem, copy = false))
         end
-        @time mul!(t2, t1, M)
-        @time for (j, j_index) in enumerate(p)
+        mul!(t2, t1, M)
+        for (j, j_index) in enumerate(p)
           Hecke.__set_row!(_local_coeffs[j_index], t2, j)
         end
       end
