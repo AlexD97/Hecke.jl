@@ -334,7 +334,7 @@ function mul!(c::AlgGrpElem{T, S}, a::AlgGrpElem{T, S}, b::AlgGrpElem{T, S}) whe
     for j in 1:d
       k = mA[i, j]
       _v = v[k]
-      if ismutabletype(T)
+      if _ismutabletype(T)
         _v = addmul!(_v, ca[i], cb[j])
       else
         v[k] = addmul!(_v, ca[i], cb[j])
@@ -343,6 +343,12 @@ function mul!(c::AlgGrpElem{T, S}, a::AlgGrpElem{T, S}, b::AlgGrpElem{T, S}) whe
   end
 
   return c
+end
+
+if VERSION <= v"1.7"
+  _ismutabletype(::Type{T}) where {T} = T.mutable
+else
+  _ismutabletype(::Type{T}) = ismutabletype(T)
 end
 
 function mul!(c::AlgAssElem{T}, a::AlgAssElem{T}, b::AlgAssElem{T}) where {T}

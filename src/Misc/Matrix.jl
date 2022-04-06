@@ -388,7 +388,7 @@ function ishnf(x::fmpz_mat, shape::Symbol)
       piv = x[i, j]
       j >= j_old && return false
       for k in i+1:r
-        if !ispositive_entry(x, k, j) || compare_index(x, k, j, piv) > 0
+        if !iszero(x[k, j]) && (!ispositive_entry(x, k, j) || compare_index(x, k, j, piv) > 0)
           return false
         end
       end
