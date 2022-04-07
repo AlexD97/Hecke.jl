@@ -2467,15 +2467,10 @@ function __isprincipal(O, I, side = :right; dir = ".")
 
   unit_reps = _unit_reps(M, F)
 
-  @info "copy"
   decc = copy(dec)
-  @info "sort"
   p = sortperm(unit_reps, by = x -> length(x))
-  @info "apply sort"
   dec_sorted = decc[p]
-  @info "apply sort"
   units_sorted = unit_reps[p]
-  @info "apply sort"
   bases_sorted = bases[p]
   bases_offsets_and_lengths = Tuple{Int, Int}[]
   k = 1
@@ -2487,7 +2482,6 @@ function __isprincipal(O, I, side = :right; dir = ".")
   #@show bases_offsets_and_lengths
 
   # let's collect the Z-basis of the Mi
-  @info "compute fancy basis"
   bases_sorted_cat = reduce(vcat, bases_sorted)
   special_basis_matrix = basis_matrix(bases_sorted_cat)
   inv_special_basis_matrix = inv(special_basis_matrix)
@@ -2497,7 +2491,6 @@ function __isprincipal(O, I, side = :right; dir = ".")
   
   local_coeffs = Vector{Vector{fmpq}}[]
 
-  @info "invert"
   inv_special_basis_matrix_Hinv = inv_special_basis_matrix * Hinv
 
   #@info "preprocessing units"
@@ -2515,7 +2508,7 @@ function __isprincipal(O, I, side = :right; dir = ".")
   #@info "done"
 
   @info "new preprocessing units"
-  local_coeffs = _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted, inv_special_basis_matrix_Hinv)
+  @time local_coeffs = _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted, inv_special_basis_matrix_Hinv)
 
   #@time for i in 1:length(dec)
   #  _local_coeffs = Vector{fmpq}[]
@@ -2539,7 +2532,7 @@ function __isprincipal(O, I, side = :right; dir = ".")
   #  end
   #  push!(local_coeffs2, _local_coeffs)
   #end
-  @info "done"
+  #@info "done"
   #@assert local_coeffs == local_coeffs2
 
   #for i in 1:length(dec)
@@ -2547,7 +2540,7 @@ function __isprincipal(O, I, side = :right; dir = ".")
   #end
 
   # Try to reduce the number of tests
-  @info "Collected information for the last block"
+  #@info "Collected information for the last block"
   l = bases_offsets_and_lengths[end][2]
   o = bases_offsets_and_lengths[end][1]
   indices_integral = Vector{Int}[Int[] for i in 1:l]
@@ -2562,15 +2555,16 @@ function __isprincipal(O, I, side = :right; dir = ".")
     end
   end
 
-  # @info "Lengths $(length.(local_coeffs))"
-  # @info "Unrestricted length of last block: $(length(local_coeffs[end]))"
-  # @info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
-  # @info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
+  #@info "Lengths $(length.(local_coeffs))"
+  #@info "Unrestricted length of last block: $(length(local_coeffs[end]))"
+  #@info "Restricted lengths (integral) of the last block $(length.(indices_integral))"
+  #@info "Restricted lengths (non-integral) of the last block $(length.(indices_nonintegral))"
 
   dd = dim(A)
 
   # form the product of the first sets
   #@show length(cartesian_product_iterator([1:length(local_coeffs[i]) for i in 1:length(dec) - 1]))
+
 
   @info "Starting the new method :)"
   fl, x = recursive_iterator([length(local_coeffs[i]) for i in 1:length(dec)], dd, local_coeffs, bases_offsets_and_lengths, indices_integral, indices_nonintegral)
@@ -2895,16 +2889,12 @@ end
 
 function _local_coeffs_buffer(A, l)
   D = get_attribute!(A, :local_coeffs_buffer) do
-    Dict{Int, Vector{Vector{fmpq}}}()
-  end::Dict{Int, Vector{Vector{fmpq}}}
-
-  if haskey(D, l)
-    @info "Local coefficient vector of length $l buffered"
-  end
+    Dict{Vector{Int}, Vector{Vector{Vector{fmpq}}}}()
+  end::Dict{Vector{Int}, Vector{Vector{Vector{fmpq}}}}
 
   return get!(D, l) do
-    Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:dim(A)] for ii in 1:l]
-  end::Vector{Vector{fmpq}}
+    Vector{Vector{fmpq}}[Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:dim(A)] for ii in 1:l[j]] for j in 1:length(l)]
+  end::Vector{Vector{Vector{fmpq}}}
 end
 
 function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted, M, block_size = 1)
@@ -2918,11 +2908,13 @@ function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted
   @assert size(M) == (k, k)
   #@assert all(x -> ncols(x) == k, tmps)
   #@assert all(x -> ncols(x) == k, tmps2)
-
+  __local_coeffs = _local_coeffs_buffer(A, length.(units_sorted))
   for i in 1:length(dec_sorted)
     ui = units_sorted[i]
-    @info "Allocating for result"
-    _local_coeffs = _local_coeffs_buffer(A, length(ui)) #Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:k] for ii in 1:length(ui)]
+    #@info "Allocating for result"
+    _local_coeffs = __local_coeffs[i]
+    #_local_coeffs = _local_coeffs_buffer(A, length(ui)) #Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:k] for ii in 1:length(ui)]
+    #_local_coeffs = Vector{fmpq}[ fmpq[zero(fmpq) for i in 1:k] for ii in 1:length(ui)]
     m = dec_sorted[i][2]::morphism_type(AlgAss{fmpq}, typeof(A))
     alphai = dec_sorted[i][2](dec_sorted[i][2]\(alpha))
     kblock = div(length(ui), nt) 
@@ -2939,7 +2931,6 @@ function _compute_local_coefficients_parallel(alpha, A, dec_sorted, units_sorted
     tmps2 = [zero_matrix(QQ, kblock, k) for i in 1:nt]
     tmp_elem = [A() for i in 1:nt]
     if length(par) >= nt
-      #@info "Doing it in parallel"
       GC.gc(true)
       Threads.@threads for i in 1:length(par)
         #thi = 1 #Threads.threadid()
@@ -3108,7 +3099,7 @@ end
 
 function _load_units_from_rest(io::IO, A)
   idempotents, units = _load_rest(io, A) 
-  @info "Reordering if necessary"
+  #@info "Reordering if necessary"
   dec = decompose(A)
   k = length(dec)
   perm = Int[]
