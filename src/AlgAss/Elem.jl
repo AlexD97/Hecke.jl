@@ -348,7 +348,7 @@ end
 if VERSION <= v"1.7"
   _ismutabletype(::Type{T}) where {T} = T.mutable
 else
-  _ismutabletype(::Type{T}) = ismutabletype(T)
+  _ismutabletype(::Type{T}) where {T} = ismutabletype(T)
 end
 
 function mul!(c::AlgAssElem{T}, a::AlgAssElem{T}, b::AlgAssElem{T}) where {T}
