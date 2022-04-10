@@ -2188,7 +2188,7 @@ function _unit_reps(M, F; dir = ".")
     return D[F]
   else
     local u::Vector{Vector{elem_type(algebra(M))}}
-    _u = _find_unit_reps_in_file(M, F)
+    _u = nothing # _find_unit_reps_in_file(M, F)
     if _u !== nothing
       u = _u
     else
@@ -2202,7 +2202,8 @@ function _unit_reps(M, F; dir = ".")
       dec = decompose(algebra(M))
       k = length(dec)
       idemsA = [dec[i][2](one(dec[i][1])) for i in 1:k]
-      _save_elements(fname, algebra(M), basis_matrix(M), basis_matrix(F), idemsA, u)
+      #@info "Saving to file"
+      #@time _save_elements(fname, algebra(M), basis_matrix(M), basis_matrix(F), idemsA, u)
     end
     D[F] = u
     return u
